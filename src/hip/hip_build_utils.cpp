@@ -171,16 +171,27 @@ static fs::path HipBuildImpl(boost::optional<TmpDir>& tmp_dir,
 
     // hip version
     params += " -DHIP_PACKAGE_VERSION_FLAT=" + std::string{HIP_PACKAGE_VERSION_FLAT} + " ";
+#ifndef _WIN32
+    auto bin_file = tmp_dir->path / (filename + ".o");
+    MIOPEN_LOG_W("TESTAR1 at filename: " << filename "bin_file:" << bin_file.string());
+#else
     auto bin_file = make_object_file_name(tmp_dir.get() / filename);
+#endif
 
     // compile
     {
+#ifndef _WIN32
+        const std::string args       = params + filename + " -o " + bin_file.string() + redirector;
+        MIOPEN_LOG_W("TESTAR2 at args " << args << " filename: " << filename "bin_file:" << bin_file.string());
+#else
         std::string args = params + filename + " -o " + bin_file;
+#endif
 #ifndef _WIN32
         // Windows uses WIN32 API to execute a subprocess. None command shell is spawned.
         if(testing_mode)
             args += " 1>/dev/null 2>&1";
 #endif
+        MIOPEN_LOG_W("TESTAR3 at args " << args << "MIOPEN_HIP_COMPILER:" <<MIOPEN_HIP_COMPILER);
         tmp_dir->Execute(MIOPEN_HIP_COMPILER, args);
         if(!fs::exists(bin_file))
             MIOPEN_THROW("Failed cmd: '" MIOPEN_HIP_COMPILER "', args: '" + args + '\'');
@@ -188,11 +199,21 @@ static fs::path HipBuildImpl(boost::optional<TmpDir>& tmp_dir,
 
 #if defined(MIOPEN_OFFLOADBUNDLER_BIN) && !MIOPEN_BACKEND_HIP
     // Unbundling is not required for HIP runtime && hip-clang
+#ifndef _WIN32
+        MIOPEN_LOG_W("TESTAR4 at bin_fie " <<bin_file.string()  << "MIOPEN_OFFLOADBUNDLER_BIN:" <<MIOPEN_OFFLOADBUNDLER_BIN);
+    tmp_dir->Execute(MIOPEN_OFFLOADBUNDLER_BIN,
+                     "--type=o "
+                     "--targets=hipv4-amdgcn-amd-amdhsa-" +
+                     (std::string{'-'} + lots.device + lots.xnack) +
+                     " --inputs=" + bin_file.string() + " --outputs=" + bin_file.string() +
+                     ".hsaco --unbundle");
+#else
     tmp_dir->Execute(MIOPEN_OFFLOADBUNDLER_BIN,
                      "--type=o "
                      "--targets=hipv4-amdgcn-amd-amdhsa-" +
                          (std::string{'-'} + lots.device + lots.xnack) + " --inputs=" + bin_file +
                          " --outputs=" + bin_file + ".hsaco --unbundle");
+#endif
 
     auto hsaco = std::find_if(fs::directory_iterator{tmp_dir->path}, {}, [](auto entry) {
         return (entry.path().extension() == ".hsaco");
@@ -200,7 +221,11 @@ static fs::path HipBuildImpl(boost::optional<TmpDir>& tmp_dir,
 
     if(hsaco == fs::directory_iterator{})
     {
+#ifndef _WIN32
+        MIOPEN_LOG_E("failed to find *.hsaco in " << hsaco->path().string());
+#else
         MIOPEN_LOG_E("failed to find *.hsaco in " << hsaco->path());
+#endif
     }
     return hsaco->path();
 #else
@@ -219,4 +244,13 @@ fs::path HipBuild(boost::optional<TmpDir>& tmp_dir,
     return HipBuildImpl(tmp_dir, filename, src, params, target, false);
 }
 
+#ifndef _WIN32
+void bin_file_to_str(const fs::path& file, std::string& buf)
+{
+   std::ifstream bin_file_ptr(file.string().c_str(), std::ios::binary);
+   std::ostringstream bin_file_strm;
+   bin_file_strm << bin_file_ptr.rdbuf();
+   buf = bin_file_strm.str();
+}
+#endif
 } // namespace miopen
